@@ -1,0 +1,91 @@
+import pygame
+import random
+
+pygame.init()
+
+# Set up the game window
+screen_width = 1920
+screen_height = 1080
+screen = pygame.display.set_mode((screen_width, screen_height))
+pygame.display.set_caption("Medieval Game")
+
+# Set up the game clock
+clock = pygame.time.Clock()
+
+# Load game assets
+player_image = pygame.image.load("knight.png").convert_alpha()
+sword_image = pygame.image.load("sword.png").convert_alpha()
+axe_image = pygame.image.load("axe.png").convert_alpha()
+mace_image = pygame.image.load("mace.png").convert_alpha()
+bow_image = pygame.image.load("bow.png").convert_alpha()
+crossbow_image = pygame.image.load("crossbow.png").convert_alpha()
+arrow_image = pygame.image.load("arrow.png").convert_alpha()
+horse_image = pygame.image.load("horse.png").convert_alpha()
+shield_image = pygame.image.load("shield.png").convert_alpha()
+
+# Set up game objects
+player_pos = [screen_width/2, screen_height/2]
+player_speed = 5
+player_weapon = "sword"
+player_health = 100
+player_shield = True
+enemies = []
+for i in range(5):
+    enemy_pos = [random.randint(0, screen_width), random.randint(0, screen_height)]
+    enemies.append(enemy_pos)
+horse_pos = [0, 0]
+horse_speed = 10
+
+# Game loop
+riding_horse = False
+running = True
+while running:
+    # Handle events
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            running = False
+        elif event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_SPACE:
+                if riding_horse:
+                    riding_horse = False
+                    player_speed = 5
+                else:
+                    if pygame.Rect(player_pos[0], player_pos[1], 50, 50).colliderect(pygame.Rect(horse_pos[0], horse_pos[1], 50, 50)):
+                        riding_horse = True
+                        player_speed = horse_speed
+
+    # Update the game
+    keys = pygame.key.get_pressed()
+    if keys[pygame.K_LEFT] and player_pos[0] > 0:
+        player_pos[0] -= player_speed
+    elif keys[pygame.K_RIGHT] and player_pos[0] < screen_width:
+        player_pos[0] += player_speed
+    if keys[pygame.K_UP] and player_pos[1] > 0:
+        player_pos[1] -= player_speed
+    elif keys[pygame.K_DOWN] and player_pos[1] < screen_height:
+        player_pos[1] += player_speed
+
+    if keys[pygame.K_1]:
+        player_weapon = "sword"
+    elif keys[pygame.K_2]:
+        player_weapon = "axe"
+    elif keys[pygame.K_3]:
+        player_weapon = "mace"
+    elif keys[pygame.K_4]:
+        player_weapon = "bow"
+    elif keys[pygame.K_5]:
+        player_weapon = "crossbow"
+    
+    if keys[pygame.K_SPACE]:
+        player_shield = True
+    else:
+        player_shield = False
+
+    for enemy in enemies:
+        if pygame.Rect(player_pos[0], player_pos[1], 50, 50).colliderect(pygame.Rect(enemy[0], enemy[1], 50, 50)):
+            if player_shield:
+                pass
+            else:
+                if player_health > 0:
+                    player_health -= 10
+                    player = [player_pos,
