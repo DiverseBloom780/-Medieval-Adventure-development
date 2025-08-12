@@ -1,116 +1,138 @@
 import pygame
 import random
+import sys
 
-pygame.init()
+# Initialize Pygame
+try:
+    pygame.init()
+except Exception as e:
+    print(f"Failed to initialize Pygame: {e}")
+    sys.exit(1)
 
-# Set up the display
-screen_width = 800
-screen_height = 600
-screen = pygame.display.set_mode((screen_width, screen_height))
-pygame.display.set_caption("Medieval Adventure")
+# Constants
+SCREEN_WIDTH = 800
+SCREEN_HEIGHT = 600
+PLAYER_SIZE = 50
+HORSE_SIZE = 50
+ENEMY_SIZE = 50
 
-# Load images
-player_image = pygame.image.load("player.png")
-horse_image = pygame.image.load("horse.png")
-sword_image = pygame.image.load("sword.png")
-axe_image = pygame.image.load("axe.png")
-mace_image = pygame.image.load("mace.png")
-bow_image = pygame.image.load("bow.png")
-crossbow_image = pygame.image.load("crossbow.png")
-health_image = pygame.image.load("health.png")
-shield_image = pygame.image.load("shield.png")
-enemy_image = pygame.image.load("enemy.png")
+# Colors
+WHITE = (255, 255, 255)
+RED = (255, 0, 0)
+GREEN = (0, 255, 0)
+BROWN = (139, 69, 19)
 
-# Load sounds
-hit_sound = pygame.mixer.Sound("hit.wav")
-game_music = pygame.mixer.music.load("game_music.wav")
-pygame.mixer.music.play(-1)
+class Player:
+    def __init__(self):
+        self.pos = [SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2]
+        self.speed = 5
+        self.health = 100
+        self.weapon = "sword"
+        self.shield = False
 
-# Set up game variables
-player_pos = [screen_width // 2, screen_height // 2]
-player_speed = 5
-player_health = 100
-player_weapon = "sword"
-player_shield = False
-riding_horse = False
+class Horse:
+    def __init__(self):
+        self.pos = [SCREEN_WIDTH // 2 - 100, SCREEN_HEIGHT // 2]
+        self.speed = 10
 
-horse_pos = [screen_width // 2 - 100, screen_height // 2]
-horse_speed = 10
+class Enemy:
+    def __init__(self, player_pos):
+        self.pos = self.generate_pos(player_pos)
 
-enemies = []
-for i in range(50):
-    enemy_x = random.randint(0, screen_width - 50)
-    enemy_y = random.randint(0, screen_height - 50)
-    enemies.append([enemy_x, enemy_y, 50, 50])
+    def generate_pos(self, player_pos):
+        while True:
+            pos = [random.randint(0, SCREEN_WIDTH - ENEMY_SIZE), random.randint(0, SCREEN_HEIGHT - ENEMY_SIZE)]
+            if abs(player_pos[0] - pos[0]) > PLAYER_SIZE or abs(player_pos[1] - pos[1]) > PLAYER_SIZE:
+                return pos
 
-power_ups = []
-for i in range(3):
-    power_up_x = random.randint(0, screen_width - 50)
-    power_up_y = random.randint(0, screen_height - 50)
-    power_ups.append([power_up_x, power_up_y, "health"])
+def main():
+    try:
+        # Set up display
+        screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+        pygame.display.set_caption("Medieval Adventure")
 
-score = 0
-level = 1
-max_level = 3
+        # Game objects
+        player = Player()
+        horse = Horse()
+        enemies = [Enemy(player.pos) for _ in range(50)]
 
-# Set up game loop
-running = True
-clock = pygame.time.Clock()
+        # Game loop
+        clock = pygame.time.Clock()
+        running = True
+        riding_horse = False
+        game_over = False
 
-while running:
-    # Handle events
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            running = False
-        elif event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_SPACE:
-                if riding_horse:
-                    riding_horse = False
-                    player_speed = 5
-                else:
-                    if pygame.Rect(player_pos[0], player_pos[1], 50, 50).colliderect(pygame.Rect(horse_pos[0], horse_pos[1], 50, 50)):         
-                       riding_horse =True
-                       player_speed =horse_speed
-            elif event.key == pygame.K_1:
-               player_weapon = "sword"
-            elif event.key == pygame.K_2:
-               player_weapon = "axe"
-            elif event.key == pygame.K_3:
-               player_weapon = "mace"
-            elif event.key == pygame.K_4:
-               player_weapon = "bow"
-            elif event.key == pygame.K_5:
-               player_weapon = "crossbow"
-            elif event.key == pygame.K_SPACE:
-               player_shield = True
-            elif event.key == pygame.K_q:
-                player_shield = False
+        while running:
+            # Handle events
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    running = False
 
-    for enemy in enemies:
-        if pygame.Rect(player_pos[0], player_pos[1], 50, 50).colliderect(pygame.Rect(enemy[0], enemy[1], 50, 50)):
-           
-            if player_shield:
-                pass
+            keys = pygame.key.get_pressed()
+            if riding_horse:
+                if keys[pygame.K_UP]:
+                    horse.pos[1] -= player.speed
+                    horse.pos[1] = max(0, horse.pos[1])
+                if keys[pygame.K_DOWN]:
+                    horse.pos[1] += player.speed
+                    horse.pos[1] = min(SCREEN_HEIGHT - HORSE_SIZE, horse.pos[1])
+                if keys[pygame.K_LEFT]:
+                    horse.pos[0] -= player.speed
+                    horse.pos[0] = max(0, horse.pos[0])
+                if keys[pygame.K_RIGHT]:
+                    horse.pos[0] += player.speed
+                    horse.pos[0] = min(SCREEN_WIDTH - HORSE_SIZE, horse.pos[0])
+                player.pos = horse.pos
             else:
-                if player_health > 0:
-                    player_health -= 10
-                enemies.remove(enemy)
+                if keys[pygame.K_UP]:
+                    player.pos[1] -= player.speed
+                    player.pos[1] = max(0, player.pos[1])
+                if keys[pygame.K_DOWN]:
+                    player.pos[1] += player.speed
+                    player.pos[1] = min(SCREEN_HEIGHT - PLAYER_SIZE, player.pos[1])
+                if keys[pygame.K_LEFT]:
+                    player.pos[0] -= player.speed
+                    player.pos[0] = max(0, player.pos[0])
+                if keys[pygame.K_RIGHT]:
+                    player.pos[0] += player.speed
+                    player.pos[0] = min(SCREEN_WIDTH - PLAYER_SIZE, player.pos[0])
 
-    #
+            # Collision detection
+            for enemy in enemies[:]:
+                if abs(player.pos[0] - enemy.pos[0]) < (PLAYER_SIZE + ENEMY_SIZE) // 2 and abs(player.pos[1] - enemy.pos[1]) < (PLAYER_SIZE + ENEMY_SIZE) // 2:
+                    if not player.shield:
+                        player.health -= 10
+                        player.health = max(0, player.health)
+                        if player.health <= 0:
+                            game_over = True
+                    enemies.remove(enemy)
 
+            if game_over:
+                screen.fill(WHITE)
+                font = pygame.font.Font(None, 36)
+                text = font.render("Game Over", True, RED)
+                text_rect = text.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2))
+                screen.blit(text, text_rect)
+                pygame.display.update()
+                pygame.time.wait(2000)
+                running = False
 
-    # Draw the game
-    screen.fill((255, 255, 255))
-    if riding_horse:
-        screen.blit(horse_image, horse_pos)
-    else:
-        screen.blit(player_image, player_pos)
-    for enemy in enemies:
-        pygame.draw.rect(screen, (255, 0, 0), pygame.Rect(enemy[0], enemy[1], 50, 50))
-    pygame.display.update()
+            # Draw the game
+            screen.fill(WHITE)
+            if riding_horse:
+                pygame.draw.rect(screen, BROWN, (horse.pos[0], horse.pos[1], HORSE_SIZE, HORSE_SIZE))
+            else:
+                pygame.draw.rect(screen, GREEN, (player.pos[0], player.pos[1], PLAYER_SIZE, PLAYER_SIZE))
+            for enemy in enemies:
+                pygame.draw.rect(screen, RED, (enemy.pos[0], enemy.pos[1], ENEMY_SIZE, ENEMY_SIZE))
+            pygame.display.update()
 
-    # Update the game clock
-    clock.tick(60)
+            # Update the game clock
+            clock.tick(60)
+    except Exception as e:
+        print(f"An error occurred: {e}")
+    finally:
+        pygame.quit()
 
-# Quit the game
-pygame.quit()
+if __name__ == "__main__":
+    main()
