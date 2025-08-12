@@ -1,31 +1,10 @@
 # -*- coding: utf-8 -*-
-"""
-Medieval Adventure — Improved Pygame Demo
------------------------------------------
-
-A compact arcade-style demo featuring:
-- Player archer with mouse-aimed arrows and stamina-based sprint
-- Ballista turret with heavy bolts and cooldown
-- Enemy swordsmen (melee) and archers (ranged) with simple AI
-- Wave-based spawner that ramps difficulty
-- Castle with health; lose when castle HP reaches 0
-- Score, HUD, pause, and restart
-- Particles & floating damage numbers
-- dt-based movement & safe list iterations
-
-Everything draws with primitives (no assets required).
-"""
-
-import warnings
-warnings.filterwarnings("ignore", category=UserWarning)
-
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Tuple
 import math
 import random
 import sys
-
 import pygame
 
 # ---------------------------------------------------------------------------
@@ -68,6 +47,11 @@ WHITE       = (255, 255, 255)
 UI_BG       = (25,  25,  28)
 UI_FG       = (210, 210, 215)
 
+MERLON_WIDTH = 14
+GATE_WIDTH = 36
+GATE_HEIGHT = 38
+HEALTH_BAR_GREEN = (60, 220, 90)
+
 # Gameplay tuning
 PLAYER_SPEED           = 280.0      # px/s
 PLAYER_SPRINT_SPEED    = 420.0
@@ -106,8 +90,8 @@ PARTICLE_LIFETIME      = 0.4
 # Utility
 # ---------------------------------------------------------------------------
 
-def clamp(v: float, lo: float, hi: float) -> float:
-    return max(lo, min(hi, v))
+def clamp(value, min_value, max_value):
+    return min(max(value, min_value), max_value)
 
 def vec_from_angle(origin: Tuple[float, float], target: Tuple[float, float]) -> pygame.math.Vector2:
     v = pygame.math.Vector2(target[0] - origin[0], target[1] - origin[1])
@@ -128,18 +112,17 @@ def draw_tree(screen: pygame.Surface, x: int, y: int) -> None:
 def draw_castle(screen: pygame.Surface, rect: pygame.Rect, hp_frac: float) -> None:
     pygame.draw.rect(screen, STONE_GRAY, rect, border_radius=2)
     # merlons
-    merlon_w = 14
-    for i in range(rect.left, rect.right, merlon_w * 2):
-        pygame.draw.rect(screen, STONE_GRAY, (i, rect.top - 12, merlon_w, 12))
+    for i in range(rect.left, rect.right, MERLON_WIDTH * 2):
+        pygame.draw.rect(screen, STONE_GRAY, (i, rect.top - 12, MERLON_WIDTH, 12))
     # gate
-    gate = pygame.Rect(rect.centerx - 18, rect.bottom - 38, 36, 38)
+    gate = pygame.Rect(rect.centerx - GATE_WIDTH / 2, rect.bottom - GATE_HEIGHT, GATE_WIDTH, GATE_HEIGHT)
     pygame.draw.rect(screen, BROWN, gate, border_radius=2)
     # HP bar
     bar_w, bar_h = rect.width, 12
     bar_x, bar_y = rect.left, rect.top - 22
     pygame.draw.rect(screen, BLACK, (bar_x, bar_y, bar_w, bar_h), border_radius=3)
     fill_w = int(bar_w * hp_frac)
-    pygame.draw.rect(screen, (60, 220, 90), (bar_x, bar_y, fill_w, bar_h), border_radius=3)
+    pygame.draw.rect(screen, HEALTH_BAR_GREEN, (bar_x, bar_y, fill_w, bar_h), border_radius=3)
 
 def draw_archer(screen: pygame.Surface, x: int, y: int, facing: pygame.math.Vector2) -> None:
     # Head & hair
@@ -228,32 +211,6 @@ class Projectile:
         pygame.draw.circle(screen, self.color, (int(self.x), int(self.y)), self.radius)
 
 @dataclass
-class FloatingText:
-    text: str
-    x: float
-    y: float
-    color: Tuple[int, int, int]
-    lifetime: float = 0.8
-    age: float = 0.0
-    vy: float = -70.0
-
-    def update(self, dt: float) -> None:
-        self.age += dt
-        self.y += self.vy * dt
-
-    def draw(self, screen: pygame.Surface, font: pygame.font.Font) -> None:
-        alpha = clamp(1.0 - self.age / self.lifetime, 0.0, 1.0)
-        surf = font.render(self.text, True, self.color)
-        if alpha < 1.0:
-            surf = surf.convert_alpha()
-            surf.fill((255, 255, 255, int(255 * alpha)), special_flags=pygame.BLEND_RGBA_MULT)
-        screen.blit(surf, (int(self.x), int(self.y)))
-
-    @property
-    def alive(self) -> bool:
-        return self.age < self.lifetime
-
-@dataclass
 class Particle:
     x: float
     y: float
@@ -275,9 +232,8 @@ class Particle:
 
     def draw(self, screen: pygame.Surface) -> None:
         alpha = clamp(1.0 - self.age / self.lifetime, 0.0, 1.0)
-        col = (int(self.color[0]), int(self.color[1]), int(self.color[2]), int(255 * alpha))
         s = pygame.Surface((3, 3), pygame.SRCALPHA)
-        s.fill(col)
+        s.fill((int(self.color[0]), int(self.color[1]), int(self.color[2]), int(255 * alpha)))
         screen.blit(s, (int(self.x), int(self.y)))
 
 @dataclass
@@ -390,7 +346,7 @@ class Player:
 
     def try_shoot(self, projectiles: List[Projectile]) -> None:
         if self.shoot_timer == 0.0:
-            hand = (self.x + 10, self.y + 15)
+                    hand = (self.x + 10, self.y + 15)
             projectiles.append(Projectile(
                 x=hand[0], y=hand[1],
                 vx=self.aim_dir.x * ARROW_SPEED,
@@ -466,7 +422,6 @@ class Game:
         self.enemy_projectiles: List[Projectile] = []
         self.enemies: List[Enemy] = []
         self.particles: List[Particle] = []
-        self.floaters: List[FloatingText] = []
 
         # Spawning / waves
         self.wave = 1
@@ -539,13 +494,10 @@ class Game:
         self.enemy_projectiles = [p for p in self.enemy_projectiles if p.alive and -60 <= p.x <= SCREEN_WIDTH]
         self.enemies = [e for e in self.enemies if e.hp > 0 and e.x > -40]
         self.particles = [pt for pt in self.particles if pt.alive]
-        self.floaters = [ft for ft in self.floaters if ft.alive]
 
-        # Particles & floaters
+        # Particles
         for pt in self.particles:
             pt.update(dt)
-        for ft in self.floaters:
-            ft.update(dt)
 
         # Wave
         self.maybe_advance_wave()
@@ -570,8 +522,6 @@ class Game:
                     if e.hp <= 0:
                         self.score += 20
                         self.spawn_hit_effect(e.x, e.y + 10, (255, 200, 100), pop=True)
-                    else:
-                        self.floaters.append(FloatingText(str(proj.damage), e.x, e.y - 20, GOLD))
                     break
 
         # Enemy arrows vs player or castle
@@ -584,7 +534,6 @@ class Game:
             if pr.colliderect(self.player.rect.inflate(-6, -12)):
                 self.player.hp -= proj.damage
                 self.spawn_hit_effect(pr.centerx, pr.centery, (60, 60, 220))
-                self.floaters.append(FloatingText(f"-{proj.damage}", self.player.x, self.player.y - 24, RED))
                 proj.alive = False
                 if self.player.hp <= 0:
                     # Respawn player with penalty
@@ -642,10 +591,6 @@ class Game:
         # Particles
         for pt in self.particles:
             pt.draw(screen)
-
-        # Floaters
-        for ft in self.floaters:
-            ft.draw(screen, self.font)
 
         # UI
         draw_ui_panel(
@@ -707,4 +652,4 @@ def main() -> None:
         pygame.quit()
 
 if __name__ == "__main__":
-    main()
+    main()    
