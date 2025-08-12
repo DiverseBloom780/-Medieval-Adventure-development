@@ -738,7 +738,66 @@ class Game:
                 self.update(dt)
 
             self.render()
+class Game:
+    # ... (rest of the class)
 
+    def title_screen(self) -> None:
+        title_font = pygame.font.SysFont("consolas", 64)
+        title_text = title_font.render("Medieval Adventure", True, (0, 0, 0))
+        start_text = pygame.font.SysFont("consolas", 32).render("Press Enter to Start", True, (0, 0, 0))
+
+        while True:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    sys.exit(0)
+                if event.type == pygame.KEYDOWN and event.key == pygame.K_RETURN:
+                    return
+
+            self.screen.fill(SKY_BLUE)
+            self.screen.blit(title_text, (SCREEN_WIDTH // 2 - title_text.get_width() // 2, SCREEN_HEIGHT // 2 - title_text.get_height() // 2))
+            self.screen.blit(start_text, (SCREEN_WIDTH // 2 - start_text.get_width() // 2, SCREEN_HEIGHT // 2 + title_text.get_height() // 2 + 20))
+            pygame.display.flip()
+            self.clock.tick(FPS)
+
+    def run(self) -> None:
+        self.title_screen()
+        while True:
+            dt = self.clock.tick(FPS) / 1000.0
+            dt = min(dt, 1.0 / 30.0)
+
+            for ev in pygame.event.get():
+                self.handle_event(ev)
+
+            if not self.paused and not self.game_over:
+                self.update(dt)
+
+            self.render()
+
+@dataclass
+class PowerUp:
+    x: float
+    y: float
+    ttl: float = 5.0  # time to live
+    alive: bool = True
+
+    def update(self, dt: float, player_center: Tuple[float, float], magnet_radius: float) -> None:
+        self.ttl -= dt
+        if self.ttl <= 0:
+            self.alive = False
+
+    def draw(self, screen: pygame.Surface) -> None:
+        pygame.draw.circle(screen, GOLD, (int(self.x), int(self.y)), 10)
+
+    def collides_with_point(self, x: float, y: float) -> bool:
+        return ((self.x - x) ** 2 + (self.y - y) ** 2) ** 0.5 < 10
+
+    def apply(self, player: 'Player') -> str:
+        player.triple_shot_timer = 5.0
+        return "Triple Shot"
+
+def spawn_powerup_at(x: float, y: float) -> PowerUp:
+    return PowerUp(x=x, y=y)
 # ---------------------------------------------------------------------------
 # Entrypoint
 # ---------------------------------------------------------------------------
