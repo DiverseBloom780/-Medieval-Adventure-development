@@ -81,6 +81,7 @@ class EnemySwordsman:
         self.x = x
         self.y = y
         self.speed = 2
+        self.health = 100
 
     def draw(self, screen):
         # The head
@@ -95,15 +96,23 @@ class EnemySwordsman:
         pygame.draw.line(screen, BROWN, (self.x, self.y + 30), (self.x + 5, self.y + 50), 5)
         # The sword
         pygame.draw.line(screen, (128, 128, 128), (self.x + 10, self.y + 25), (self.x + 20, self.y + 25), 3)
+        pygame.draw.rect(screen, (255, 0, 0), (self.x, self.y - 10, 10, 5))
+        pygame.draw.rect(screen, (0, 255, 0), (self.x, self.y - 10, int(10 * self.health / 100), 5))
 
     def update(self):
         self.x -= self.speed
+
+    def take_damage(self, damage):
+        self.health -= damage
+        if self.health <= 0:
+            enemy_swordsmen.remove(self)
 
 class EnemyArcher:
     def __init__(self, x, y):
         self.x = x
         self.y = y
         self.speed = 2
+        self.health = 100
 
     def draw(self, screen):
         # The head
@@ -117,12 +126,19 @@ class EnemyArcher:
         pygame.draw.line(screen, BROWN, (self.x, self.y + 30), (self.x - 5, self.y + 50), 5)
         pygame.draw.line(screen, BROWN, (self.x, self.y + 30), (self.x + 5, self.y + 50), 5)
         # The bow
-        pygame.draw.line(screen, BOW_COLOR, (self.x + 10, self.y + 25), (self.x + 20, self.y + 15), 5)
-        pygame.draw.line(screen, BOW_COLOR, (self.x + 20, self.y + 15), (self.x + 10, self.y + 5), 5)
-        pygame.draw.line(screen, STRING_COLOR, (self.x + 20, self.y + 15), (self.x + 10, self.y + 15), 2)
+        pygame.draw.line(screen, BOW_COLOR, (self.x - 10, self.y + 25), (self.x - 20, self.y + 15), 5)
+        pygame.draw.line(screen, BOW_COLOR, (self.x - 20, self.y + 15), (self.x - 10, self.y + 5), 5)
+        pygame.draw.line(screen, STRING_COLOR, (self.x - 20, self.y + 15), (self.x - 10, self.y + 15), 2)
+        pygame.draw.rect(screen, (255, 0, 0), (self.x, self.y - 10, 10, 5))
+        pygame.draw.rect(screen, (0, 255, 0), (self.x, self.y - 10, int(10 * self.health / 100), 5))
 
     def update(self):
         self.x -= self.speed
+
+    def take_damage(self, damage):
+        self.health -= damage
+        if self.health <= 0:
+            enemy_archers.remove(self)
 
 class Ballista:
     def __init__(self, x, y):
@@ -132,8 +148,8 @@ class Ballista:
         self.arrows = []
 
     def draw(self, screen):
-        pygame.draw.rect(screen, STONE_GRAY, (self.x, self.y, 20, 20))
-        pygame.draw.line(screen, BROWN, (self.x + 10, self.y + 20), (self.x + 10, self.y + 40), 5)
+        pygame.draw.rect(screen, STONE_GRAY, (400, 500, 100, 20))
+        pygame.draw.line(screen, BROWN, (450, 520), (450, 540), 5)
 
     def update(self):
         for arrow in self.arrows:
@@ -142,7 +158,7 @@ class Ballista:
                 self.arrows.remove(arrow)
 
     def fire(self):
-        self.arrows.append(Arrow(self.x + 10, self.y + 30))
+        self.arrows.append(Arrow(450, 520))
 
 class EnemyArrow:
     def __init__(self, x, y):
@@ -176,14 +192,14 @@ def main():
         arrows = []
 
         # Enemy swordsmen
-        enemy_swordsmen = [EnemySwordsman(800, int(SCREEN_HEIGHT * 0.6) - 50)]
+        enemy_swordsmen = []
 
         # Enemy archers
-        enemy_archers = [EnemyArcher(900, int(SCREEN_HEIGHT * 0.6) - 50)]
+        enemy_archers = []
         enemy_arrows = []
 
         # Ballista
-        ballista = Ballista(450, 300)
+        ballista = Ballista(450, 520)
 
         # Game loop
         clock = pygame.time.Clock()
@@ -213,11 +229,27 @@ def main():
             archer_x = max(0, min(archer_x, SCREEN_WIDTH))
             archer_y = max(0, min(archer_y, SCREEN_HEIGHT))
 
+            # Spawn enemies
+            if random.randint(0, 100) < 5:
+                enemy_swordsmen.append(EnemySwordsman(SCREEN_WIDTH, int(SCREEN_HEIGHT * 0.6) - 50))
+            if random.randint(0, 100) < 5:
+                enemy_archers.append(EnemyArcher(SCREEN_WIDTH, int(SCREEN_HEIGHT * 0.6) - 50))
+
             # Update arrows
             for arrow in arrows:
                 arrow.update()
                 if arrow.x > SCREEN_WIDTH:
                     arrows.remove(arrow)
+                for enemy in enemy_swordsmen:
+                    if arrow.x + 15 > enemy.x and arrow.x < enemy.x + 10 and arrow.y > enemy.y and arrow.y < enemy.y + 50:
+                        enemy.take_damage(20)
+                        arrows.remove(arrow)
+                        break
+                for enemy in enemy_archers:
+                    if arrow.x + 15 > enemy.x and arrow.x < enemy.x + 10 and arrow.y > enemy.y and arrow.y < enemy.y + 50:
+                        enemy.take_damage(20)
+                        arrows.remove(arrow)
+                        break
 
             # Update enemies
             for enemy in enemy_swordsmen:
