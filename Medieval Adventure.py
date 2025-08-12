@@ -3,6 +3,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 import pygame
 import math
 import sys
+import random
 
 # Initialize Pygame
 try:
@@ -75,6 +76,92 @@ class Arrow:
     def update(self):
         self.x += self.speed
 
+class EnemySwordsman:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.speed = 2
+
+    def draw(self, screen):
+        # The head
+        pygame.draw.circle(screen, SKIN_COLOR, (self.x, self.y), 10)
+        # The body
+        pygame.draw.line(screen, BROWN, (self.x, self.y + 10), (self.x, self.y + 30), 5)
+        # The arms
+        pygame.draw.line(screen, BROWN, (self.x, self.y + 15), (self.x - 10, self.y + 25), 5)
+        pygame.draw.line(screen, BROWN, (self.x, self.y + 15), (self.x + 10, self.y + 25), 5)
+        # The legs
+        pygame.draw.line(screen, BROWN, (self.x, self.y + 30), (self.x - 5, self.y + 50), 5)
+        pygame.draw.line(screen, BROWN, (self.x, self.y + 30), (self.x + 5, self.y + 50), 5)
+        # The sword
+        pygame.draw.line(screen, (128, 128, 128), (self.x + 10, self.y + 25), (self.x + 20, self.y + 25), 3)
+
+    def update(self):
+        self.x -= self.speed
+
+class EnemyArcher:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.speed = 2
+
+    def draw(self, screen):
+        # The head
+        pygame.draw.circle(screen, SKIN_COLOR, (self.x, self.y), 10)
+        # The body
+        pygame.draw.line(screen, BROWN, (self.x, self.y + 10), (self.x, self.y + 30), 5)
+        # The arms
+        pygame.draw.line(screen, BROWN, (self.x, self.y + 15), (self.x - 10, self.y + 25), 5)
+        pygame.draw.line(screen, BROWN, (self.x, self.y + 15), (self.x + 10, self.y + 25), 5)
+        # The legs
+        pygame.draw.line(screen, BROWN, (self.x, self.y + 30), (self.x - 5, self.y + 50), 5)
+        pygame.draw.line(screen, BROWN, (self.x, self.y + 30), (self.x + 5, self.y + 50), 5)
+        # The bow
+        pygame.draw.line(screen, BOW_COLOR, (self.x + 10, self.y + 25), (self.x + 20, self.y + 15), 5)
+        pygame.draw.line(screen, BOW_COLOR, (self.x + 20, self.y + 15), (self.x + 10, self.y + 5), 5)
+        pygame.draw.line(screen, STRING_COLOR, (self.x + 20, self.y + 15), (self.x + 10, self.y + 15), 2)
+
+    def update(self):
+        self.x -= self.speed
+
+class Ballista:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.arrow_speed = 10
+        self.arrows = []
+
+    def draw(self, screen):
+        pygame.draw.rect(screen, STONE_GRAY, (self.x, self.y, 20, 20))
+        pygame.draw.line(screen, BROWN, (self.x + 10, self.y + 20), (self.x + 10, self.y + 40), 5)
+
+    def update(self):
+        for arrow in self.arrows:
+            arrow.update()
+            if arrow.x > SCREEN_WIDTH:
+                self.arrows.remove(arrow)
+
+    def fire(self):
+        self.arrows.append(Arrow(self.x + 10, self.y + 30))
+
+class EnemyArrow:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.speed = 10
+
+    def draw(self, screen):
+        # The shaft
+        pygame.draw.line(screen, ARROW_COLOR, (self.x, self.y), (self.x - 15, self.y), 3)
+        # The fletchings
+        pygame.draw.line(screen, (255, 255, 255), (self.x, self.y - 2), (self.x - 5, self.y - 2), 1)
+        pygame.draw.line(screen, (255, 255, 255), (self.x, self.y + 2), (self.x - 5, self.y + 2), 1)
+        # The arrowhead
+        pygame.draw.polygon(screen, ARROW_COLOR, [(self.x - 15, self.y - 2), (self.x - 20, self.y), (self.x - 15, self.y + 2)])
+
+    def update(self):
+        self.x -= self.speed
+
 def main():
     try:
         # Set up display
@@ -88,6 +175,16 @@ def main():
         # Arrows
         arrows = []
 
+        # Enemy swordsmen
+        enemy_swordsmen = [EnemySwordsman(800, int(SCREEN_HEIGHT * 0.6) - 50)]
+
+        # Enemy archers
+        enemy_archers = [EnemyArcher(900, int(SCREEN_HEIGHT * 0.6) - 50)]
+        enemy_arrows = []
+
+        # Ballista
+        ballista = Ballista(450, 300)
+
         # Game loop
         clock = pygame.time.Clock()
         running = True
@@ -99,6 +196,8 @@ def main():
                 if event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_SPACE:
                         arrows.append(Arrow(archer_x + 20, archer_y + 15))
+                    if event.key == pygame.K_f:
+                        ballista.fire()
 
             keys = pygame.key.get_pressed()
             if keys[pygame.K_LEFT] or keys[pygame.K_a]:
@@ -120,16 +219,44 @@ def main():
                 if arrow.x > SCREEN_WIDTH:
                     arrows.remove(arrow)
 
+            # Update enemies
+            for enemy in enemy_swordsmen:
+                enemy.update()
+                if enemy.x < 0:
+                    enemy_swordsmen.remove(enemy)
+            for enemy in enemy_archers:
+                enemy.update()
+                if enemy.x < 0:
+                    enemy_archers.remove(enemy)
+                if random.randint(0, 100) < 5:
+                    enemy_arrows.append(EnemyArrow(enemy.x, enemy.y + 15))
+            for arrow in enemy_arrows:
+                arrow.update()
+                if arrow.x < 0:
+                    enemy_arrows.remove(arrow)
+
+            # Update ballista
+            ballista.update()
+
             # Draw the game
             screen.fill(SKY_BLUE)
             ground_y = int(SCREEN_HEIGHT * 0.6)
             pygame.draw.rect(screen, GREEN, (0, ground_y, SCREEN_WIDTH, int(SCREEN_HEIGHT * 0.4)))
             draw_castle(screen, 400, ground_y - 100)
+            ballista.draw(screen)
             draw_tree(screen, 600, ground_y + 50)
             draw_tree(screen, 800, ground_y + 50)
             draw_tree(screen, 1000, ground_y + 50)
             draw_archer(screen, archer_x, archer_y)
             for arrow in arrows:
+                arrow.draw(screen)
+            for enemy in enemy_swordsmen:
+                enemy.draw(screen)
+            for enemy in enemy_archers:
+                enemy.draw(screen)
+            for arrow in enemy_arrows:
+                arrow.draw(screen)
+            for arrow in ballista.arrows:
                 arrow.draw(screen)
             pygame.display.update()
 
