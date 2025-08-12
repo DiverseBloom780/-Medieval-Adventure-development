@@ -22,6 +22,7 @@ BROWN = (165, 42, 42)
 STONE_GRAY = (192, 192, 192)
 TREE_GREEN = (0, 128, 0)
 WATER_BLUE = (0, 191, 255)
+ROCK_GRAY = (128, 128, 128)
 
 def draw_tree(screen, x, y):
     pygame.draw.line(screen, BROWN, (x, y), (x, y - 50), 5)
@@ -30,6 +31,12 @@ def draw_tree(screen, x, y):
 def draw_castle(screen, x, y):
     pygame.draw.rect(screen, STONE_GRAY, (x, y, 100, 100))
     pygame.draw.rect(screen, BROWN, (x + 40, y + 80, 20, 20))
+
+def draw_rock(screen, x, y):
+    pygame.draw.ellipse(screen, ROCK_GRAY, (x, y, 50, 50))
+
+def draw_path(screen, x, y):
+    pygame.draw.line(screen, BROWN, (x, y), (x + 200, y), 10)
 
 def main():
     try:
@@ -55,6 +62,9 @@ def main():
             draw_tree(screen, 600, ground_y + 50)
             draw_tree(screen, 1000, ground_y + 50)
             draw_tree(screen, 800, ground_y + 50)
+            draw_rock(screen, 500, ground_y + 100)
+            draw_rock(screen, 1100, ground_y + 100)
+            draw_path(screen, 700, ground_y + 150)
             pygame.display.update()
 
             # Update the game clock
