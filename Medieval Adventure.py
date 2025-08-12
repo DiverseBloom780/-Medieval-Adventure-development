@@ -1,14 +1,19 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 import math
 import random
 import sys
 import pygame
 
-# NEW: power-ups module
+# NEW: power-ups module (your existing file)
 from powerups import PowerUp, spawn_powerup_at, POWERUP_DROP_CHANCE
+
+# NEW: helper modules
+from fx import ScreenShake, FloatingText, RingBurst
+from persistence import load_high_score, save_high_score
+from reticle import draw_reticle
 
 # ---------------------------------------------------------------------------
 # Init
@@ -147,35 +152,38 @@ def draw_archer(screen: pygame.Surface, x: int, y: int, facing: pygame.math.Vect
 
 def draw_ui_panel(screen: pygame.Surface, font: pygame.font.Font, score: int, wave: int,
                   player_hp: int, player_stamina: float, castle_hp: int, paused: bool, game_over: bool,
-                  triple_timer: float = 0.0) -> None:
+                  triple_timer: float = 0.0, high_score: Optional[int] = None) -> None:
     panel = pygame.Rect(0, 0, SCREEN_WIDTH, 40)
     pygame.draw.rect(screen, UI_BG, panel)
 
-    # Score & wave
+    # Score, wave, high score
     s_surf = font.render(f"Score: {score}", True, UI_FG)
     w_surf = font.render(f"Wave: {wave}", True, UI_FG)
     screen.blit(s_surf, (12, 10))
     screen.blit(w_surf, (140, 10))
+    if high_score is not None:
+        hs = font.render(f"Best: {high_score}", True, UI_FG)
+        screen.blit(hs, (220, 10))
 
     # Player HP
     hp_frac = clamp(player_hp / PLAYER_MAX_HP, 0, 1)
-    pygame.draw.rect(screen, BLACK, (260, 12, 160, 16), border_radius=4)
-    pygame.draw.rect(screen, (220, 70, 70), (260, 12, int(160 * hp_frac), 16), border_radius=4)
-    screen.blit(font.render("HP", True, UI_FG), (260 + 170, 10))
+    pygame.draw.rect(screen, BLACK, (360, 12, 160, 16), border_radius=4)
+    pygame.draw.rect(screen, (220, 70, 70), (360, 12, int(160 * hp_frac), 16), border_radius=4)
+    screen.blit(font.render("HP", True, UI_FG), (360 + 170, 10))
 
     # Stamina
     st_frac = clamp(player_stamina / PLAYER_STAMINA_MAX, 0, 1)
-    pygame.draw.rect(screen, BLACK, (430, 12, 160, 16), border_radius=4)
-    pygame.draw.rect(screen, (70, 170, 220), (430, 12, int(160 * st_frac), 16), border_radius=4)
-    screen.blit(font.render("STA", True, UI_FG), (430 + 170, 10))
+    pygame.draw.rect(screen, BLACK, (530, 12, 160, 16), border_radius=4)
+    pygame.draw.rect(screen, (70, 170, 220), (530, 12, int(160 * st_frac), 16), border_radius=4)
+    screen.blit(font.render("STA", True, UI_FG), (530 + 170, 10))
 
     # Castle HP
     c_frac = clamp(castle_hp / CASTLE_HP_MAX, 0, 1)
-    pygame.draw.rect(screen, BLACK, (610, 12, 200, 16), border_radius=4)
-    pygame.draw.rect(screen, (60, 220, 90), (610, 12, int(200 * c_frac), 16), border_radius=4)
-    screen.blit(font.render("Castle", True, UI_FG), (610 + 210, 10))
+    pygame.draw.rect(screen, BLACK, (710, 12, 200, 16), border_radius=4)
+    pygame.draw.rect(screen, (60, 220, 90), (710, 12, int(200 * c_frac), 16), border_radius=4)
+    screen.blit(font.render("Castle", True, UI_FG), (710 + 210, 10))
 
-    # Buff indicator (NEW)
+    # Status texts
     if triple_timer > 0.0:
         t = font.render(f"Buff: Triple Shot {triple_timer:0.1f}s", True, GOLD)
         screen.blit(t, (SCREEN_WIDTH - t.get_width() - 16, 10))
@@ -230,7 +238,7 @@ class Particle:
     def update(self, dt: float) -> None:
         self.age += dt
         self.x += self.vx * dt
-               self.y += self.vy * dt
+        self.y += self.vy * dt
         self.vy += 800.0 * dt  # gravity
 
     @property
@@ -312,6 +320,7 @@ class Player:
     shoot_cooldown: float = 0.22
     shoot_timer: float = 0.0
     triple_shot_timer: float = 0.0  # NEW
+    pickup_magnet_radius: float = 110.0  # NEW: gentle auto-pickup
 
     @property
     def rect(self) -> pygame.Rect:
@@ -361,9 +370,9 @@ class Player:
             return
         hand = (self.x + 10, self.y + 15)
         if self.triple_shot_timer > 0.0:
-            # three arrows with slight spread
-            for ang in (-0.16, 0.0, 0.16):
-                d = self.aim_dir.rotate_rad(ang)
+            # three arrows with slight spread (degrees for wide compatibility)
+            for deg in (-9, 0, 9):
+                d = self.aim_dir.rotate(deg)
                 projectiles.append(Projectile(
                     x=hand[0], y=hand[1], vx=d.x * ARROW_SPEED, vy=d.y * ARROW_SPEED,
                     damage=ARROW_DAMAGE, gravity=ARROW_GRAVITY, color=(200, 60, 60), radius=2
@@ -418,11 +427,15 @@ class Ballista:
 
 class Game:
     def __init__(self) -> None:
+        self.fullscreen = False
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
         pygame.display.set_caption("Medieval Adventure — Archer & Castle")
 
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont("consolas", 18)
+
+        # Offscreen scene target (for screen-shake)
+        self.scene = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT)).convert_alpha()
 
         # World
         self.ground_y = GROUND_Y
@@ -439,8 +452,10 @@ class Game:
         self.projectiles: List[Projectile] = []
         self.enemy_projectiles: List[Projectile] = []
         self.enemies: List[Enemy] = []
-        self.powerups: List[PowerUp] = []   # NEW
+        self.powerups: List[PowerUp] = []
         self.particles: List[Particle] = []
+        self.fx_texts: List[FloatingText] = []
+        self.fx_rings: List[RingBurst] = []
 
         # Spawning / waves
         self.wave = 1
@@ -450,8 +465,12 @@ class Game:
 
         # Game state
         self.score = 0
+        self.high_score = load_high_score(default=0)
         self.paused = False
         self.game_over = False
+
+        # Effects
+        self.shake = ScreenShake()
 
     # ------------- Spawning & Wave handling ---------------------------------
 
@@ -503,30 +522,42 @@ class Game:
         if total_dps > 0:
             self.castle_hp -= total_dps * dt
 
-        # Power-ups (NEW)
+        # Power-ups (now with magnet)
         for pu in self.powerups:
-            pu.update(dt)
+            pu.update(dt, player_center=self.player.pickup_center, magnet_radius=self.player.pickup_magnet_radius)
 
         # Collisions
         self.handle_collisions()
 
         # Cleanup
-        self.projectiles = [p for p in self.projectiles if p.alive and 0 <= p.x <= SCREEN_WIDTH + 60]
-        self.enemy_projectiles = [p for p in self.enemy_projectiles if p.alive and -60 <= p.x <= SCREEN_WIDTH]
+        self.projectiles = [p for p in self.projectiles if p.alive and -60 <= p.x <= SCREEN_WIDTH + 60]
+        self.enemy_projectiles = [p for p in self.enemy_projectiles if p.alive and -60 <= p.x <= SCREEN_WIDTH + 60]
         self.enemies = [e for e in self.enemies if e.hp > 0 and e.x > -40]
         self.particles = [pt for pt in self.particles if pt.alive]
-        self.powerups = [pu for pu in self.powerups if pu.alive]  # NEW
+        self.powerups = [pu for pu in self.powerups if pu.alive]
+        self.fx_texts = [t for t in self.fx_texts if t.alive]
+        self.fx_rings = [r for r in self.fx_rings if r.alive]
 
-        # Particles
+        # Particles & FX
         for pt in self.particles:
             pt.update(dt)
+        for t in self.fx_texts:
+            t.update(dt)
+        for r in self.fx_rings:
+            r.update(dt)
 
-        # Wave
+        # Wave & score persisting
         self.maybe_advance_wave()
+        if self.score > self.high_score:
+            self.high_score = self.score
+            save_high_score(self.high_score)
 
         # Lose condition
         if self.castle_hp <= 0 and not self.game_over:
             self.game_over = True
+
+        # Update shake
+        self.shake.update(dt)
 
     def handle_collisions(self) -> None:
         # Player arrows vs enemies
@@ -541,11 +572,11 @@ class Game:
                     is_kill = (e.hp <= 0)
                     self.score += 5
                     self.kills_this_wave += (1 if is_kill else 0)
-                    self.spawn_hit_effect(pr.centerx, pr.centery, (220, 60, 60))
+                    self.spawn_hit_effect(pr.centerx, pr.centery, (220, 60, 60), pop=False)
                     if is_kill:
                         self.score += 20
                         self.spawn_hit_effect(e.x, e.y + 10, (255, 200, 100), pop=True)
-                        # Chance to drop power-up (NEW)
+                        # Chance to drop power-up
                         if random.random() < POWERUP_DROP_CHANCE:
                             self.powerups.append(spawn_powerup_at(e.x, e.y))
                     break
@@ -567,14 +598,16 @@ class Game:
                 self.spawn_hit_effect(pr.centerx, pr.centery, (130, 130, 130))
                 proj.alive = False
 
-        # Player pickup power-ups (NEW)
+        # Player pickup power-ups
         px, py = self.player.pickup_center
         for pu in self.powerups:
-            if pu.alive and pu.collides_with(px, py):
-                pu.apply(self)
-                pu.ttl = 0.0  # mark consumed
-                # small pickup sparkle
-                self.spawn_hit_effect(pu.x, pu.y, (255, 255, 255))
+            if pu.alive and pu.collides_with_point(px, py):
+                label = pu.apply(self)
+                pu.ttl = 0.0  # consumed
+                # pickup FX
+                self.fx_rings.append(RingBurst(x=pu.x, y=pu.y, radius=14, radius_to=40, color=WHITE))
+                self.fx_texts.append(FloatingText(x=pu.x, y=pu.y - 8, text=label, color=(30, 30, 30)))
+                self.spawn_hit_effect(pu.x, pu.y, (255, 255, 255), pop=False)
 
     def spawn_hit_effect(self, x: float, y: float, color: Tuple[int, int, int], pop: bool = False) -> None:
         for _ in range(PARTICLE_COUNT_HIT if not pop else PARTICLE_COUNT_HIT + 6):
@@ -583,59 +616,83 @@ class Game:
             self.particles.append(Particle(
                 x=x, y=y, vx=math.cos(ang) * spd, vy=math.sin(ang) * spd, color=color
             ))
+        # subtle screen-shake
+        self.shake.kick(intensity=(2.0 if not pop else 4.0), duration=(0.10 if not pop else 0.18))
 
     # ------------- Rendering -------------------------------------------------
 
-    def render(self) -> None:
-        screen = self.screen
-        screen.fill(SKY_BLUE)
+    def render_scene(self, target: pygame.Surface) -> None:
+        target.fill(SKY_BLUE)
 
         # Ground
-        pygame.draw.rect(screen, GREEN, (0, self.ground_y, SCREEN_WIDTH, SCREEN_HEIGHT - self.ground_y))
+        pygame.draw.rect(target, GREEN, (0, self.ground_y, SCREEN_WIDTH, SCREEN_HEIGHT - self.ground_y))
 
         # Scenery
-        draw_tree(screen, 700, self.ground_y + 40)
-        draw_tree(screen, 900, self.ground_y + 50)
-        draw_tree(screen, 1080, self.ground_y + 60)
+        draw_tree(target, 700, self.ground_y + 40)
+        draw_tree(target, 900, self.ground_y + 50)
+        draw_tree(target, 1080, self.ground_y + 60)
 
         # Castle
-        draw_castle(screen, self.castle_rect, clamp(self.castle_hp / CASTLE_HP_MAX, 0, 1))
+        draw_castle(target, self.castle_rect, clamp(self.castle_hp / CASTLE_HP_MAX, 0, 1))
 
         # Ballista
-        self.ballista.draw(screen)
+        self.ballista.draw(target)
 
         # Player
-        draw_archer(screen, int(self.player.x), int(self.player.y), self.player.aim_dir)
+        draw_archer(target, int(self.player.x), int(self.player.y), self.player.aim_dir)
 
         # Enemies
         for e in self.enemies:
-            e.draw(screen)
+            e.draw(target)
 
         # Projectiles
         for p in self.projectiles:
-            p.draw(screen)
+            p.draw(target)
         for p in self.enemy_projectiles:
-            p.draw(screen)
+            p.draw(target)
 
-        # Power-ups (NEW)
+        # Power-ups
         for pu in self.powerups:
-            pu.draw(screen)
+            pu.draw(target)
 
         # Particles
         for pt in self.particles:
-            pt.draw(screen)
+            pt.draw(target)
 
-        # UI (show triple shot timer when active)
+        # FX rings (world layer)
+        for r in self.fx_rings:
+            r.draw(target)
+
+    def render(self) -> None:
+        # Draw world into offscreen scene
+        self.render_scene(self.scene)
+
+        # Blit scene with screen-shake offset to the real screen
+        self.screen.fill((0, 0, 0))
+        ox, oy = self.shake.offset
+        self.screen.blit(self.scene, (int(ox), int(oy)))
+
+        # UI & overlays (don’t shake)
         draw_ui_panel(
-            screen, self.font, score=self.score, wave=self.wave,
+            self.screen, self.font, score=self.score, wave=self.wave,
             player_hp=self.player.hp, player_stamina=self.player.stamina,
             castle_hp=int(self.castle_hp), paused=self.paused, game_over=self.game_over,
-            triple_timer=self.player.triple_shot_timer
+            triple_timer=self.player.triple_shot_timer, high_score=self.high_score
         )
+
+        # Non-shaking FX (floating text) & reticle on top
+        for t in self.fx_texts:
+            t.draw(self.screen)
+        draw_reticle(self.screen, pygame.mouse.get_pos())
 
         pygame.display.flip()
 
     # ------------- Input -----------------------------------------------------
+
+    def toggle_fullscreen(self) -> None:
+        self.fullscreen = not self.fullscreen
+        flags = pygame.FULLSCREEN if self.fullscreen else 0
+        pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), flags)
 
     def handle_event(self, ev: pygame.event.Event) -> None:
         if ev.type == pygame.QUIT:
@@ -649,22 +706,31 @@ class Game:
                 self.paused = not self.paused
             if ev.key == pygame.K_r and self.game_over:
                 self.__init__()  # reset
+            if ev.key == pygame.K_F11:
+                self.toggle_fullscreen()
             if ev.key == pygame.K_SPACE and not (self.paused or self.game_over):
                 self.player.try_shoot(self.projectiles)
+                self.shake.kick(1.5, 0.08)
             if ev.key == pygame.K_f and not (self.paused or self.game_over):
                 self.ballista.fire(self.projectiles)
+                self.shake.kick(2.0, 0.10)
         if ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
             if not (self.paused or self.game_over):
                 self.player.try_shoot(self.projectiles)
+                self.shake.kick(1.5, 0.08)
         if ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 3:
             if not (self.paused or self.game_over):
                 self.ballista.fire(self.projectiles)
+                self.shake.kick(2.0, 0.10)
 
     # ------------- Main Loop -------------------------------------------------
 
     def run(self) -> None:
         while True:
             dt = self.clock.tick(FPS) / 1000.0
+            # Clamp dt to prevent physics explosions during pauses/window drags
+            dt = min(dt, 1.0 / 30.0)
+
             for ev in pygame.event.get():
                 self.handle_event(ev)
 
