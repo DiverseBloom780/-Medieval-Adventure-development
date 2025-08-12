@@ -1,32 +1,11 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-
-"""
-Medieval Adventure — Improved Pygame Demo
------------------------------------------
-
-A compact arcade-style demo featuring:
-- Player archer with mouse-aimed arrows and stamina-based sprint
-- Ballista turret with heavy bolts and cooldown
-- Enemy swordsmen (melee) and archers (ranged) with simple AI
-- Wave-based spawner that ramps difficulty
-- Castle with health; lose when castle HP reaches 0
-- Score, HUD, pause, and restart
-- Particles & floating damage numbers
-- dt-based movement & safe list iterations
-
-Everything draws with primitives (no assets required).
-"""
-
-import warnings
-warnings.filterwarnings("ignore", category=UserWarning)
-
+from dataclasses import dataclass, field
+from typing import List, Tuple
 import math
 import random
 import sys
 import pygame
-from dataclasses import dataclass, field
-from typing import List, Tuple
 
 # ---------------------------------------------------------------------------
 # Init
@@ -340,68 +319,337 @@ class Player:
             (keys[pygame.K_d] or keys[pygame.K_RIGHT]) - (keys[pygame.K_a] or keys[pygame.K_LEFT]),
             (keys[pygame.K_s] or keys[pygame.K_DOWN]) - (keys[pygame.K_w] or keys[pygame.K_UP]),
         )
-        # ... rest of the Player class ...
+        sprint = keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]
+        want_speed = PLAYER_SPRINT_SPEED if sprint and self.stamina > 0 else PLAYER_SPEED
 
-def main():
+        if move.length_squared() > 0:
+            move = move.normalize()
+            self.x += move.x * want_speed * dt
+            self.y += move.y * want_speed * dt
+
+        # Bounds on walkable area
+        self.x = clamp(self.x, 20, SCREEN_WIDTH - 20)
+        self.y = clamp(self.y, GROUND_Y - 60, GROUND_Y - 50)
+
+        # Stamina
+        if sprint and move.length_squared() > 0 and self.stamina > 0:
+            self.stamina = clamp(self.stamina - PLAYER_STAMINA_DRAIN * dt, 0, PLAYER_STAMINA_MAX)
+        else:
+            self.stamina = clamp(self.stamina + PLAYER_STAMINA_REGEN * dt, 0, PLAYER_STAMINA_MAX)
+
+        # Cooldown
+        self.shoot_timer = max(0.0, self.shoot_timer - dt)
+
+        # Update aim dir to mouse
+        mx, my = pygame.mouse.get_pos()
+        self.aim_dir = vec_from_angle((self.x + 10, self.y + 15), (mx, my))
+
+    def try_shoot(self, projectiles: List[Projectile]) -> None:
+        if self.shoot_timer == 0.0:
+                    hand = (self.x + 10, self.y + 15)
+            projectiles.append(Projectile(
+                x=hand[0], y=hand[1],
+                vx=self.aim_dir.x * ARROW_SPEED,
+                vy=self.aim_dir.y * ARROW_SPEED,
+                damage=ARROW_DAMAGE, gravity=ARROW_GRAVITY, color=ARROW_COL
+            ))
+            self.shoot_timer = self.shoot_cooldown
+
+@dataclass
+class Ballista:
+    x: float
+    y: float
+    cooldown: float = BOLT_COOLDOWN
+    timer: float = 0.0
+
+    def update(self, dt: float) -> None:
+        self.timer = max(0.0, self.timer - dt)
+
+    def fire(self, projectiles: List[Projectile]) -> None:
+        if self.timer > 0.0:
+            return
+        mx, my = pygame.mouse.get_pos()
+        dirv = vec_from_angle((self.x, self.y), (mx, my))
+        projectiles.append(Projectile(
+            x=self.x, y=self.y, vx=dirv.x * BOLT_SPEED, vy=dirv.y * BOLT_SPEED,
+            damage=BOLT_DAMAGE, gravity=ARROW_GRAVITY * 0.65, color=(60, 30, 30), radius=3
+        ))
+        self.timer = self.cooldown
+
+    def draw(self, screen: pygame.Surface) -> None:
+        # Carriage
+        pygame.draw.rect(screen, STONE_GRAY, (self.x - 40, self.y + 20, 80, 18))
+        # Arm
+        mx, my = pygame.mouse.get_pos()
+        dirv = vec_from_angle((self.x, self.y), (mx, my))
+        tip = (self.x + dirv.x * 40, self.y + dirv.y * 40)
+        pygame.draw.line(screen, BROWN, (self.x, self.y), tip, 6)
+        # Cooldown arc
+        if self.timer > 0:
+            frac = 1.0 - clamp(self.timer / self.cooldown, 0, 1)
+            pygame.draw.circle(screen, (80, 80, 80), (int(self.x), int(self.y)), 16, 2)
+            pygame.draw.arc(
+                screen, GOLD,
+                (int(self.x - 16), int(self.y - 16), 32, 32),
+                -math.pi / 2, -math.pi / 2 + 2 * math.pi * frac, 3
+            )
+
+# ---------------------------------------------------------------------------
+# Game
+# ---------------------------------------------------------------------------
+
+class Game:
+    def __init__(self) -> None:
+        self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+        pygame.display.set_caption("Medieval Adventure — Archer & Castle")
+
+        self.clock = pygame.time.Clock()
+        self.font = pygame.font.SysFont("consolas", 18)
+
+        # World
+        self.ground_y = GROUND_Y
+        castle_w, castle_h = 160, 120
+        castle_x = 420
+        self.castle_rect = pygame.Rect(castle_x, self.ground_y - castle_h, castle_w, castle_h)
+        self.castle_hp = CASTLE_HP_MAX
+
+        # Actors
+        self.player = Player(x=100, y=self.ground_y - 55)
+        self.ballista = Ballista(x=self.castle_rect.centerx, y=self.castle_rect.top + 24)
+
+        # Collections
+        self.projectiles: List[Projectile] = []
+        self.enemy_projectiles: List[Projectile] = []
+        self.enemies: List[Enemy] = []
+        self.particles: List[Particle] = []
+
+        # Spawning / waves
+        self.wave = 1
+        self.kills_this_wave = 0
+        self.spawn_timer = 0.0
+        self.spawn_rate = WAVE_BASE_SPAWN_RATE  # lower => more frequent rolls
+
+        # Game state
+        self.score = 0
+        self.paused = False
+        self.game_over = False
+
+    # ------------- Spawning & Wave handling ---------------------------------
+
+    def try_spawn_enemies(self, dt: float) -> None:
+        self.spawn_timer -= dt
+        if self.spawn_timer <= 0.0:
+            self.spawn_timer = max(0.2, self.spawn_rate)
+            # Roll to spawn swordsman / archer with growing probability
+            if random.random() < 0.55:
+                self.spawn_swordsman()
+            if random.random() < clamp(0.35 + (self.wave - 1) * 0.05, 0.35, 0.85):
+                self.spawn_archer()
+
+    def spawn_swordsman(self) -> None:
+        e = Enemy(x=SCREEN_WIDTH + 30, y=self.ground_y - 55, is_archer=False)
+        self.enemies.append(e)
+
+    def spawn_archer(self) -> None:
+        e = Enemy(x=SCREEN_WIDTH + 30, y=self.ground_y - 55, is_archer=True)
+        self.enemies.append(e)
+
+    def maybe_advance_wave(self) -> None:
+        if self.kills_this_wave >= self.wave * WAVE_KILL_TARGET_STEP:
+            self.wave += 1
+            self.kills_this_wave = 0
+            self.spawn_rate *= WAVE_ACCELERATION
+            # small heal to castle
+            self.castle_hp = min(CASTLE_HP_MAX, self.castle_hp + 40)
+
+    # ------------- Updates ---------------------------------------------------
+
+    def update(self, dt: float) -> None:
+        keys = pygame.key.get_pressed()
+        self.player.update(dt, keys)
+        self.ballista.update(dt)
+
+        # Spawner
+        self.try_spawn_enemies(dt)
+
+        # Projectiles
+        for proj in self.projectiles:
+            proj.update(dt)
+        for proj in self.enemy_projectiles:
+            proj.update(dt)
+
+        # Enemy logic + castle damage
+        total_dps = 0.0
+        for e in self.enemies:
+            dps = e.update(dt, target_x=self.player.x, castle_rect=self.castle_rect, enemy_arrows=self.enemy_projectiles)
+            total_dps += dps
+        if total_dps > 0:
+            self.castle_hp -= total_dps * dt
+
+        # Collisions
+        self.handle_collisions()
+
+        # Cleanup
+        self.projectiles = [p for p in self.projectiles if p.alive and 0 <= p.x <= SCREEN_WIDTH + 60]
+        self.enemy_projectiles = [p for p in self.enemy_projectiles if p.alive and -60 <= p.x <= SCREEN_WIDTH]
+        self.enemies = [e for e in self.enemies if e.hp > 0 and e.x > -40]
+        self.particles = [pt for pt in self.particles if pt.alive]
+
+        # Particles
+        for pt in self.particles:
+            pt.update(dt)
+
+        # Wave
+        self.maybe_advance_wave()
+
+        # Check lose condition
+        if self.castle_hp <= 0 and not self.game_over:
+            self.game_over = True
+
+    def handle_collisions(self) -> None:
+        # Player arrows vs enemies
+        for proj in self.projectiles:
+            if not proj.alive:
+                continue
+            pr = proj.rect()
+            for e in self.enemies:
+                if pr.colliderect(e.rect()):
+                    e.hp -= proj.damage
+                    proj.alive = False
+                    self.score += 5
+                    self.kills_this_wave += (1 if e.hp <= 0 else 0)
+                    self.spawn_hit_effect(pr.centerx, pr.centery, (220, 60, 60))
+                    if e.hp <= 0:
+                        self.score += 20
+                        self.spawn_hit_effect(e.x, e.y + 10, (255, 200, 100), pop=True)
+                    break
+
+        # Enemy arrows vs player or castle
+        for proj in self.enemy_projectiles:
+            if not proj.alive:
+                continue
+            pr = proj.rect()
+
+            # Player hitbox (smaller than drawn)
+            if pr.colliderect(self.player.rect.inflate(-6, -12)):
+                self.player.hp -= proj.damage
+                self.spawn_hit_effect(pr.centerx, pr.centery, (60, 60, 220))
+                proj.alive = False
+                if self.player.hp <= 0:
+                    # Respawn player with penalty
+                    self.player.hp = PLAYER_MAX_HP
+                    self.castle_hp -= 50
+
+            # Castle hit (broad gate/face)
+            elif pr.colliderect(self.castle_rect.inflate(8, 8)):
+                self.castle_hp -= proj.damage * 0.5
+                self.spawn_hit_effect(pr.centerx, pr.centery, (130, 130, 130))
+                proj.alive = False
+
+    def spawn_hit_effect(self, x: float, y: float, color: Tuple[int, int, int], pop: bool = False) -> None:
+        # Particles
+        for _ in range(PARTICLE_COUNT_HIT if not pop else PARTICLE_COUNT_HIT + 6):
+            ang = random.uniform(0, 2 * math.pi)
+            spd = random.uniform(80, 220) if not pop else random.uniform(140, 320)
+            self.particles.append(Particle(
+                x=x, y=y, vx=math.cos(ang) * spd, vy=math.sin(ang) * spd, color=color
+            ))
+
+    # ------------- Rendering -------------------------------------------------
+
+    def render(self) -> None:
+        screen = self.screen
+        screen.fill(SKY_BLUE)
+
+        # Ground
+        pygame.draw.rect(screen, GREEN, (0, self.ground_y, SCREEN_WIDTH, SCREEN_HEIGHT - self.ground_y))
+
+        # Scenery
+        draw_tree(screen, 700, self.ground_y + 40)
+        draw_tree(screen, 900, self.ground_y + 50)
+        draw_tree(screen, 1080, self.ground_y + 60)
+
+        # Castle
+        draw_castle(screen, self.castle_rect, clamp(self.castle_hp / CASTLE_HP_MAX, 0, 1))
+
+        # Ballista
+        self.ballista.draw(screen)
+
+        # Player (aim direction)
+        draw_archer(screen, int(self.player.x), int(self.player.y), self.player.aim_dir)
+
+        # Enemies
+        for e in self.enemies:
+            e.draw(screen)
+
+        # Projectiles
+        for p in self.projectiles:
+            p.draw(screen)
+        for p in self.enemy_projectiles:
+            p.draw(screen)
+
+        # Particles
+        for pt in self.particles:
+            pt.draw(screen)
+
+        # UI
+        draw_ui_panel(
+            screen, self.font, score=self.score, wave=self.wave,
+            player_hp=self.player.hp, player_stamina=self.player.stamina,
+            castle_hp=int(self.castle_hp), paused=self.paused, game_over=self.game_over
+        )
+
+        pygame.display.flip()
+
+    # ------------- Input -----------------------------------------------------
+
+    def handle_event(self, ev: pygame.event.Event) -> None:
+        if ev.type == pygame.QUIT:
+            pygame.quit()
+            sys.exit(0)
+        if ev.type == pygame.KEYDOWN:
+            if ev.key in (pygame.K_ESCAPE, pygame.K_q):
+                pygame.quit()
+                sys.exit(0)
+            if ev.key == pygame.K_p:
+                self.paused = not self.paused
+            if ev.key == pygame.K_r and self.game_over:
+                self.__init__()  # reset
+            if ev.key == pygame.K_SPACE and not (self.paused or self.game_over):
+                self.player.try_shoot(self.projectiles)
+            if ev.key == pygame.K_f and not (self.paused or self.game_over):
+                self.ballista.fire(self.projectiles)
+        if ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
+            if not (self.paused or self.game_over):
+                self.player.try_shoot(self.projectiles)
+        if ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 3:
+            if not (self.paused or self.game_over):
+                self.ballista.fire(self.projectiles)
+
+    # ------------- Main Loop -------------------------------------------------
+
+    def run(self) -> None:
+        while True:
+            dt = self.clock.tick(FPS) / 1000.0
+            for ev in pygame.event.get():
+                self.handle_event(ev)
+
+            if not self.paused and not self.game_over:
+                self.update(dt)
+
+            self.render()
+
+# ---------------------------------------------------------------------------
+# Entrypoint
+# ---------------------------------------------------------------------------
+
+def main() -> None:
     try:
-        # Set up display
-        screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-        pygame.display.set_caption("Medieval Adventure")
-
-        # Start screen
-        start_screen = True
-        title_font = pygame.font.Font(None, 64)
-        start_font = pygame.font.Font(None, 32)
-        while start_screen:
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    pygame.quit()
-                    sys.exit()
-                if event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_RETURN:
-                        print("Enter key pressed")
-                        start_screen = False
-            screen.fill(SKY_BLUE)
-            title_text = title_font.render("Medieval Adventure", True, (0, 0, 0))
-            title_text_rect = title_text.get_rect(center=(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 - 50))
-            screen.blit(title_text, title_text_rect)
-            start_text = start_font.render("Press Enter to Start", True, (0, 0, 0))
-            start_text_rect = start_text.get_rect(center=(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 + 50))
-            screen.blit(start_text, start_text_rect)
-            pygame.display.update()
-
-        print("Game loop starting")
-        # Game loop
-        clock = pygame.time.Clock()
-        font = pygame.font.Font(None, 24)
-        running = True
-        while running:
-            try:
-                print("Game loop iteration")
-                # Handle events
-                for event in pygame.event.get():
-                    if event.type == pygame.QUIT:
-                        running = False
-
-                # Fill the screen with a color
-                screen.fill(SKY_BLUE)
-
-                # Draw the castle
-                castle_rect = pygame.Rect(100, GROUND_Y - 100, 200, 100)
-                draw_castle(screen, castle_rect, 1.0)
-
-                # Update the display
-                pygame.display.update()
-
-                # Cap the frame rate
-                clock.tick(60)
-            except Exception as e:
-                print(f"An error occurred in the game loop: {e}")
-                running = False
+        Game().run()
     except Exception as e:
         print(f"An error occurred: {e}")
     finally:
         pygame.quit()
 
 if __name__ == "__main__":
-    main()
+    main()    
