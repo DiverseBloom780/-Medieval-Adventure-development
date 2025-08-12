@@ -7,6 +7,9 @@ import random
 import sys
 import pygame
 
+# NEW: power-ups module
+from powerups import PowerUp, spawn_powerup_at, POWERUP_DROP_CHANCE
+
 # ---------------------------------------------------------------------------
 # Init
 # ---------------------------------------------------------------------------
@@ -143,7 +146,8 @@ def draw_archer(screen: pygame.Surface, x: int, y: int, facing: pygame.math.Vect
     pygame.draw.line(screen, STRING_COL, tip, (x + 10, y + 15), 1)
 
 def draw_ui_panel(screen: pygame.Surface, font: pygame.font.Font, score: int, wave: int,
-                  player_hp: int, player_stamina: float, castle_hp: int, paused: bool, game_over: bool) -> None:
+                  player_hp: int, player_stamina: float, castle_hp: int, paused: bool, game_over: bool,
+                  triple_timer: float = 0.0) -> None:
     panel = pygame.Rect(0, 0, SCREEN_WIDTH, 40)
     pygame.draw.rect(screen, UI_BG, panel)
 
@@ -171,8 +175,11 @@ def draw_ui_panel(screen: pygame.Surface, font: pygame.font.Font, score: int, wa
     pygame.draw.rect(screen, (60, 220, 90), (610, 12, int(200 * c_frac), 16), border_radius=4)
     screen.blit(font.render("Castle", True, UI_FG), (610 + 210, 10))
 
-    # Status texts
-    if paused:
+    # Buff indicator (NEW)
+    if triple_timer > 0.0:
+        t = font.render(f"Buff: Triple Shot {triple_timer:0.1f}s", True, GOLD)
+        screen.blit(t, (SCREEN_WIDTH - t.get_width() - 16, 10))
+    elif paused:
         t = font.render("PAUSED (P to Resume)", True, GOLD)
         screen.blit(t, (SCREEN_WIDTH - t.get_width() - 16, 10))
     elif game_over:
@@ -223,7 +230,7 @@ class Particle:
     def update(self, dt: float) -> None:
         self.age += dt
         self.x += self.vx * dt
-        self.y += self.vy * dt
+               self.y += self.vy * dt
         self.vy += 800.0 * dt  # gravity
 
     @property
@@ -252,7 +259,6 @@ class Enemy:
         return pygame.Rect(int(self.x - self.w // 2), int(self.y), self.w, self.h)
 
     def draw(self, screen: pygame.Surface) -> None:
-        # Head & body
         head = (int(self.x), int(self.y))
         pygame.draw.circle(screen, SKIN, head, 10)
         pygame.draw.line(screen, BROWN, (self.x, self.y + 10), (self.x, self.y + 30), 5)
@@ -266,7 +272,6 @@ class Enemy:
             pygame.draw.line(screen, STRING_COL, (self.x - 20, self.y + 15), (self.x - 10, self.y + 15), 1)
         else:
             pygame.draw.line(screen, (160, 160, 160), (self.x + 10, self.y + 25), (self.x + 22, self.y + 25), 3)
-        # HP bar
         frac = clamp(self.hp / ENEMY_HP, 0, 1)
         pygame.draw.rect(screen, RED, (self.x - 10, self.y - 12, 20, 4))
         pygame.draw.rect(screen, (0, 255, 0), (self.x - 10, self.y - 12, int(20 * frac), 4))
@@ -275,28 +280,24 @@ class Enemy:
                enemy_arrows: List[Projectile]) -> float:
         """Returns DPS applied to castle (if any)."""
         if self.is_archer:
-            # Move towards preferred range, then stop to shoot
             desired_x = castle_rect.centerx + ENEMY_ARCHER_RANGE
             if self.x > desired_x:
                 self.x -= ENEMY_ARCHER_SPEED * dt
             self.shoot_timer -= dt
             if self.shoot_timer <= 0.0:
                 self.shoot_timer = self.shoot_cooldown
-                # Shoot toward castle/player area
                 proj_dir = vec_from_angle((self.x - 20, self.y + 15), (target_x, GROUND_Y - 50))
                 enemy_arrows.append(Projectile(
                     x=self.x - 20, y=self.y + 15,
                     vx=proj_dir.x * ENEMY_ARROW_SPEED,
-                    vy=proj_dir.y * ENEMY_ARROW_SPEED * 0.75,  # slightly lobbed
+                    vy=proj_dir.y * ENEMY_ARROW_SPEED * 0.75,
                     damage=16, gravity=ENEMY_ARROW_GRAVITY, color=(90, 0, 0)
                 ))
             return 0.0
         else:
-            # Swordsman pushes to castle
             if self.x > castle_rect.left + 24:
                 self.x -= ENEMY_SWORD_SPEED * dt
                 return 0.0
-            # At the wall, deal DPS to castle
             return ENEMY_DPS_VS_CASTLE
 
 @dataclass
@@ -305,14 +306,24 @@ class Player:
     y: float
     hp: int = PLAYER_MAX_HP
     speed: float = PLAYER_SPEED
+    stamina_max: float = PLAYER_STAMINA_MAX
     stamina: float = PLAYER_STAMINA_MAX
     aim_dir: pygame.math.Vector2 = field(default_factory=lambda: pygame.math.Vector2(1, 0))
     shoot_cooldown: float = 0.22
     shoot_timer: float = 0.0
+    triple_shot_timer: float = 0.0  # NEW
 
     @property
     def rect(self) -> pygame.Rect:
         return pygame.Rect(int(self.x - 10), int(self.y), 20, 50)
+
+    @property
+    def pickup_center(self) -> Tuple[float, float]:
+        # hand/chest area for power-up pickup
+        return (self.x + 10, self.y + 18)
+
+    def activate_triple_shot(self, duration: float) -> None:
+        self.triple_shot_timer = max(self.triple_shot_timer, duration)
 
     def update(self, dt: float, keys: pygame.key.ScancodeWrapper) -> None:
         move = pygame.math.Vector2(
@@ -327,33 +338,43 @@ class Player:
             self.x += move.x * want_speed * dt
             self.y += move.y * want_speed * dt
 
-        # Bounds on walkable area
+        # Bounds
         self.x = clamp(self.x, 20, SCREEN_WIDTH - 20)
         self.y = clamp(self.y, GROUND_Y - 60, GROUND_Y - 50)
 
         # Stamina
         if sprint and move.length_squared() > 0 and self.stamina > 0:
-            self.stamina = clamp(self.stamina - PLAYER_STAMINA_DRAIN * dt, 0, PLAYER_STAMINA_MAX)
+            self.stamina = clamp(self.stamina - PLAYER_STAMINA_DRAIN * dt, 0, self.stamina_max)
         else:
-            self.stamina = clamp(self.stamina + PLAYER_STAMINA_REGEN * dt, 0, PLAYER_STAMINA_MAX)
+            self.stamina = clamp(self.stamina + PLAYER_STAMINA_REGEN * dt, 0, self.stamina_max)
 
         # Cooldown
         self.shoot_timer = max(0.0, self.shoot_timer - dt)
+        self.triple_shot_timer = max(0.0, self.triple_shot_timer - dt)
 
-        # Update aim dir to mouse
+        # Aim dir to mouse
         mx, my = pygame.mouse.get_pos()
         self.aim_dir = vec_from_angle((self.x + 10, self.y + 15), (mx, my))
 
     def try_shoot(self, projectiles: List[Projectile]) -> None:
-        if self.shoot_timer == 0.0:
-                    hand = (self.x + 10, self.y + 15)
+        if self.shoot_timer > 0.0:
+            return
+        hand = (self.x + 10, self.y + 15)
+        if self.triple_shot_timer > 0.0:
+            # three arrows with slight spread
+            for ang in (-0.16, 0.0, 0.16):
+                d = self.aim_dir.rotate_rad(ang)
+                projectiles.append(Projectile(
+                    x=hand[0], y=hand[1], vx=d.x * ARROW_SPEED, vy=d.y * ARROW_SPEED,
+                    damage=ARROW_DAMAGE, gravity=ARROW_GRAVITY, color=(200, 60, 60), radius=2
+                ))
+        else:
             projectiles.append(Projectile(
                 x=hand[0], y=hand[1],
-                vx=self.aim_dir.x * ARROW_SPEED,
-                vy=self.aim_dir.y * ARROW_SPEED,
+                vx=self.aim_dir.x * ARROW_SPEED, vy=self.aim_dir.y * ARROW_SPEED,
                 damage=ARROW_DAMAGE, gravity=ARROW_GRAVITY, color=ARROW_COL
             ))
-            self.shoot_timer = self.shoot_cooldown
+        self.shoot_timer = self.shoot_cooldown
 
 @dataclass
 class Ballista:
@@ -377,14 +398,11 @@ class Ballista:
         self.timer = self.cooldown
 
     def draw(self, screen: pygame.Surface) -> None:
-        # Carriage
         pygame.draw.rect(screen, STONE_GRAY, (self.x - 40, self.y + 20, 80, 18))
-        # Arm
         mx, my = pygame.mouse.get_pos()
         dirv = vec_from_angle((self.x, self.y), (mx, my))
         tip = (self.x + dirv.x * 40, self.y + dirv.y * 40)
         pygame.draw.line(screen, BROWN, (self.x, self.y), tip, 6)
-        # Cooldown arc
         if self.timer > 0:
             frac = 1.0 - clamp(self.timer / self.cooldown, 0, 1)
             pygame.draw.circle(screen, (80, 80, 80), (int(self.x), int(self.y)), 16, 2)
@@ -421,13 +439,14 @@ class Game:
         self.projectiles: List[Projectile] = []
         self.enemy_projectiles: List[Projectile] = []
         self.enemies: List[Enemy] = []
+        self.powerups: List[PowerUp] = []   # NEW
         self.particles: List[Particle] = []
 
         # Spawning / waves
         self.wave = 1
         self.kills_this_wave = 0
         self.spawn_timer = 0.0
-        self.spawn_rate = WAVE_BASE_SPAWN_RATE  # lower => more frequent rolls
+        self.spawn_rate = WAVE_BASE_SPAWN_RATE
 
         # Game state
         self.score = 0
@@ -440,7 +459,6 @@ class Game:
         self.spawn_timer -= dt
         if self.spawn_timer <= 0.0:
             self.spawn_timer = max(0.2, self.spawn_rate)
-            # Roll to spawn swordsman / archer with growing probability
             if random.random() < 0.55:
                 self.spawn_swordsman()
             if random.random() < clamp(0.35 + (self.wave - 1) * 0.05, 0.35, 0.85):
@@ -459,7 +477,6 @@ class Game:
             self.wave += 1
             self.kills_this_wave = 0
             self.spawn_rate *= WAVE_ACCELERATION
-            # small heal to castle
             self.castle_hp = min(CASTLE_HP_MAX, self.castle_hp + 40)
 
     # ------------- Updates ---------------------------------------------------
@@ -486,6 +503,10 @@ class Game:
         if total_dps > 0:
             self.castle_hp -= total_dps * dt
 
+        # Power-ups (NEW)
+        for pu in self.powerups:
+            pu.update(dt)
+
         # Collisions
         self.handle_collisions()
 
@@ -494,6 +515,7 @@ class Game:
         self.enemy_projectiles = [p for p in self.enemy_projectiles if p.alive and -60 <= p.x <= SCREEN_WIDTH]
         self.enemies = [e for e in self.enemies if e.hp > 0 and e.x > -40]
         self.particles = [pt for pt in self.particles if pt.alive]
+        self.powerups = [pu for pu in self.powerups if pu.alive]  # NEW
 
         # Particles
         for pt in self.particles:
@@ -502,7 +524,7 @@ class Game:
         # Wave
         self.maybe_advance_wave()
 
-        # Check lose condition
+        # Lose condition
         if self.castle_hp <= 0 and not self.game_over:
             self.game_over = True
 
@@ -516,12 +538,16 @@ class Game:
                 if pr.colliderect(e.rect()):
                     e.hp -= proj.damage
                     proj.alive = False
+                    is_kill = (e.hp <= 0)
                     self.score += 5
-                    self.kills_this_wave += (1 if e.hp <= 0 else 0)
+                    self.kills_this_wave += (1 if is_kill else 0)
                     self.spawn_hit_effect(pr.centerx, pr.centery, (220, 60, 60))
-                    if e.hp <= 0:
+                    if is_kill:
                         self.score += 20
                         self.spawn_hit_effect(e.x, e.y + 10, (255, 200, 100), pop=True)
+                        # Chance to drop power-up (NEW)
+                        if random.random() < POWERUP_DROP_CHANCE:
+                            self.powerups.append(spawn_powerup_at(e.x, e.y))
                     break
 
         # Enemy arrows vs player or castle
@@ -529,25 +555,28 @@ class Game:
             if not proj.alive:
                 continue
             pr = proj.rect()
-
-            # Player hitbox (smaller than drawn)
             if pr.colliderect(self.player.rect.inflate(-6, -12)):
                 self.player.hp -= proj.damage
                 self.spawn_hit_effect(pr.centerx, pr.centery, (60, 60, 220))
                 proj.alive = False
                 if self.player.hp <= 0:
-                    # Respawn player with penalty
                     self.player.hp = PLAYER_MAX_HP
                     self.castle_hp -= 50
-
-            # Castle hit (broad gate/face)
             elif pr.colliderect(self.castle_rect.inflate(8, 8)):
                 self.castle_hp -= proj.damage * 0.5
                 self.spawn_hit_effect(pr.centerx, pr.centery, (130, 130, 130))
                 proj.alive = False
 
+        # Player pickup power-ups (NEW)
+        px, py = self.player.pickup_center
+        for pu in self.powerups:
+            if pu.alive and pu.collides_with(px, py):
+                pu.apply(self)
+                pu.ttl = 0.0  # mark consumed
+                # small pickup sparkle
+                self.spawn_hit_effect(pu.x, pu.y, (255, 255, 255))
+
     def spawn_hit_effect(self, x: float, y: float, color: Tuple[int, int, int], pop: bool = False) -> None:
-        # Particles
         for _ in range(PARTICLE_COUNT_HIT if not pop else PARTICLE_COUNT_HIT + 6):
             ang = random.uniform(0, 2 * math.pi)
             spd = random.uniform(80, 220) if not pop else random.uniform(140, 320)
@@ -575,7 +604,7 @@ class Game:
         # Ballista
         self.ballista.draw(screen)
 
-        # Player (aim direction)
+        # Player
         draw_archer(screen, int(self.player.x), int(self.player.y), self.player.aim_dir)
 
         # Enemies
@@ -588,15 +617,20 @@ class Game:
         for p in self.enemy_projectiles:
             p.draw(screen)
 
+        # Power-ups (NEW)
+        for pu in self.powerups:
+            pu.draw(screen)
+
         # Particles
         for pt in self.particles:
             pt.draw(screen)
 
-        # UI
+        # UI (show triple shot timer when active)
         draw_ui_panel(
             screen, self.font, score=self.score, wave=self.wave,
             player_hp=self.player.hp, player_stamina=self.player.stamina,
-            castle_hp=int(self.castle_hp), paused=self.paused, game_over=self.game_over
+            castle_hp=int(self.castle_hp), paused=self.paused, game_over=self.game_over,
+            triple_timer=self.player.triple_shot_timer
         )
 
         pygame.display.flip()
@@ -652,4 +686,4 @@ def main() -> None:
         pygame.quit()
 
 if __name__ == "__main__":
-    main()    
+    main()
