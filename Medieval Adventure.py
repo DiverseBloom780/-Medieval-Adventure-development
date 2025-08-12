@@ -64,7 +64,13 @@ class Arrow:
         self.speed = 10
 
     def draw(self, screen):
-        pygame.draw.line(screen, ARROW_COLOR, (self.x, self.y), (self.x + 20, self.y), 3)
+        # The shaft
+        pygame.draw.line(screen, ARROW_COLOR, (self.x, self.y), (self.x + 15, self.y), 3)
+        # The fletchings
+        pygame.draw.line(screen, (255, 255, 255), (self.x, self.y - 2), (self.x + 5, self.y - 2), 1)
+        pygame.draw.line(screen, (255, 255, 255), (self.x, self.y + 2), (self.x + 5, self.y + 2), 1)
+        # The arrowhead
+        pygame.draw.polygon(screen, ARROW_COLOR, [(self.x + 15, self.y - 2), (self.x + 20, self.y), (self.x + 15, self.y + 2)])
 
     def update(self):
         self.x += self.speed
