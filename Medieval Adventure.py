@@ -53,9 +53,9 @@ def draw_archer(screen, x, y):
     pygame.draw.line(screen, BROWN, (x, y + 30), (x + 5, y + 50), 5)
 
     # The bow
-    pygame.draw.line(screen, BOW_COLOR, (x - 10, y + 25), (x - 20, y + 15), 5)
-    pygame.draw.line(screen, BOW_COLOR, (x - 20, y + 15), (x - 10, y + 5), 5)
-    pygame.draw.line(screen, STRING_COLOR, (x - 20, y + 15), (x - 10, y + 15), 2)
+    pygame.draw.line(screen, BOW_COLOR, (x + 10, y + 25), (x + 20, y + 15), 5)
+    pygame.draw.line(screen, BOW_COLOR, (x + 20, y + 15), (x + 10, y + 5), 5)
+    pygame.draw.line(screen, STRING_COLOR, (x + 20, y + 15), (x + 10, y + 15), 2)
 
 class Arrow:
     def __init__(self, x, y):
@@ -92,7 +92,7 @@ def main():
                     running = False
                 if event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_SPACE:
-                        arrows.append(Arrow(archer_x, archer_y + 15))
+                        arrows.append(Arrow(archer_x + 20, archer_y + 15))
 
             keys = pygame.key.get_pressed()
             if keys[pygame.K_LEFT] or keys[pygame.K_a]:
