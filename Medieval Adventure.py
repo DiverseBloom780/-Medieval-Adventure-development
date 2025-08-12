@@ -104,8 +104,6 @@ class EnemySwordsman:
 
     def take_damage(self, damage):
         self.health -= damage
-        if self.health <= 0:
-            enemy_swordsmen.remove(self)
 
 class EnemyArcher:
     def __init__(self, x, y):
@@ -137,8 +135,6 @@ class EnemyArcher:
 
     def take_damage(self, damage):
         self.health -= damage
-        if self.health <= 0:
-            enemy_archers.remove(self)
 
 class Ballista:
     def __init__(self, x, y):
@@ -199,7 +195,7 @@ def main():
         enemy_arrows = []
 
         # Ballista
-        ballista = Ballista(450, 520)
+        ballista = Ballista(450
 
         # Game loop
         clock = pygame.time.Clock()
@@ -243,22 +239,24 @@ def main():
                 for enemy in enemy_swordsmen:
                     if arrow.x + 15 > enemy.x and arrow.x < enemy.x + 10 and arrow.y > enemy.y and arrow.y < enemy.y + 50:
                         enemy.take_damage(20)
-                        arrows.remove(arrow)
+                        if arrow in arrows:
+                            arrows.remove(arrow)
                         break
                 for enemy in enemy_archers:
                     if arrow.x + 15 > enemy.x and arrow.x < enemy.x + 10 and arrow.y > enemy.y and arrow.y < enemy.y + 50:
                         enemy.take_damage(20)
-                        arrows.remove(arrow)
+                        if arrow in arrows:
+                            arrows.remove(arrow)
                         break
 
             # Update enemies
             for enemy in enemy_swordsmen:
                 enemy.update()
-                if enemy.x < 0:
+                if enemy.x < 0 or enemy.health <= 0:
                     enemy_swordsmen.remove(enemy)
             for enemy in enemy_archers:
                 enemy.update()
-                if enemy.x < 0:
+                if enemy.x < 0 or enemy.health <= 0:
                     enemy_archers.remove(enemy)
                 if random.randint(0, 100) < 5:
                     enemy_arrows.append(EnemyArrow(enemy.x, enemy.y + 15))
