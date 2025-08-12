@@ -174,11 +174,35 @@ class EnemyArrow:
     def update(self):
         self.x -= self.speed
 
+def draw_start_screen(screen):
+    screen.fill(SKY_BLUE)
+    font = pygame.font.Font(None, 64)
+    text = font.render("Medieval Adventure", True, (0, 0, 0))
+    text_rect = text.get_rect(center=(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 - 50))
+    screen.blit(text, text_rect)
+    font = pygame.font.Font(None, 32)
+    text = font.render("Press Enter to Start", True, (0, 0, 0))
+    text_rect = text.get_rect(center=(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 + 50))
+    screen.blit(text, text_rect)
+    pygame.display.update()
+    
 def main():
     try:
         # Set up display
         screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
         pygame.display.set_caption("Medieval Adventure")
+
+        # Start screen
+        start_screen = True
+        while start_screen:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    sys.exit()
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_RETURN:
+                        start_screen = False
+            draw_start_screen(screen)
 
         # Archer position
         archer_x = 100
