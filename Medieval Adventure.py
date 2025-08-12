@@ -195,7 +195,7 @@ def main():
         enemy_arrows = []
 
         # Ballista
-        ballista = Ballista(450
+        ballista = Ballista(450,520)
 
         # Game loop
         clock = pygame.time.Clock()
