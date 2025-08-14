@@ -7,10 +7,8 @@ import random
 import sys
 import pygame
 
-# NEW: power-ups module (your existing file)
+# External modules (already in your project)
 from powerups import PowerUp, spawn_powerup_at, POWERUP_DROP_CHANCE
-
-# NEW: helper modules
 from fx import ScreenShake, FloatingText, RingBurst
 from persistence import load_high_score, save_high_score
 from reticle import draw_reticle
@@ -152,7 +150,8 @@ def draw_archer(screen: pygame.Surface, x: int, y: int, facing: pygame.math.Vect
 
 def draw_ui_panel(screen: pygame.Surface, font: pygame.font.Font, score: int, wave: int,
                   player_hp: int, player_stamina: float, castle_hp: int, paused: bool, game_over: bool,
-                  triple_timer: float = 0.0, high_score: Optional[int] = None) -> None:
+                  triple_timer: float = 0.0, high_score: Optional[int] = None,
+                  slowmo: bool = False, show_traj: bool = False) -> None:
     panel = pygame.Rect(0, 0, SCREEN_WIDTH, 40)
     pygame.draw.rect(screen, UI_BG, panel)
 
@@ -183,16 +182,27 @@ def draw_ui_panel(screen: pygame.Surface, font: pygame.font.Font, score: int, wa
     pygame.draw.rect(screen, (60, 220, 90), (710, 12, int(200 * c_frac), 16), border_radius=4)
     screen.blit(font.render("Castle", True, UI_FG), (710 + 210, 10))
 
-    # Status texts
+    # Status texts (right side)
+    x_right = SCREEN_WIDTH - 16
+    y_line = 10
     if triple_timer > 0.0:
         t = font.render(f"Buff: Triple Shot {triple_timer:0.1f}s", True, GOLD)
-        screen.blit(t, (SCREEN_WIDTH - t.get_width() - 16, 10))
-    elif paused:
+        screen.blit(t, (x_right - t.get_width(), y_line))
+        y_line += 18
+    if slowmo:
+        t = font.render("SLOW-MO", True, GOLD)
+        screen.blit(t, (x_right - t.get_width(), y_line))
+        y_line += 18
+    if show_traj:
+        t = font.render("Trajectory", True, (120, 200, 255))
+        screen.blit(t, (x_right - t.get_width(), y_line))
+        y_line += 18
+    if paused:
         t = font.render("PAUSED (P to Resume)", True, GOLD)
-        screen.blit(t, (SCREEN_WIDTH - t.get_width() - 16, 10))
+        screen.blit(t, (x_right - t.get_width(), y_line))
     elif game_over:
         t = font.render("GAME OVER (R to Restart)", True, RED)
-        screen.blit(t, (SCREEN_WIDTH - t.get_width() - 16, 10))
+        screen.blit(t, (x_right - t.get_width(), y_line))
 
 # ---------------------------------------------------------------------------
 # Entities
@@ -357,7 +367,7 @@ class Player:
         else:
             self.stamina = clamp(self.stamina + PLAYER_STAMINA_REGEN * dt, 0, self.stamina_max)
 
-        # Cooldown
+        # Cooldowns & buffs
         self.shoot_timer = max(0.0, self.shoot_timer - dt)
         self.triple_shot_timer = max(0.0, self.triple_shot_timer - dt)
 
@@ -471,6 +481,43 @@ class Game:
 
         # Effects
         self.shake = ScreenShake()
+
+        # NEW: time scale + visualization toggles
+        self.time_scale: float = 1.0
+        self.show_trajectory: bool = False  # toggle with 'G'
+
+    # ---------------- NEW FUNCTION #1 ----------------
+    def set_time_scale(self, scale: float) -> None:
+        """Set global time scale (e.g., 0.35 for slow motion, 1.0 normal)."""
+        self.time_scale = clamp(scale, 0.05, 2.0)
+
+    # ---------------- NEW FUNCTION #2 ----------------
+    def toggle_slow_motion(self) -> None:
+        """Toggle a cinematic slow-motion mode."""
+        self.set_time_scale(1.0 if self.time_scale < 0.9 else 0.35)
+
+    # ---------------- NEW FUNCTION #3 ----------------
+    def compute_trajectory(self,
+                           start: Tuple[float, float],
+                           direction: pygame.math.Vector2,
+                           speed: float,
+                           gravity: float,
+                           steps: int = 48,
+                           dt: float = 1 / 60) -> List[Tuple[int, int]]:
+        """
+        Predict projectile path points (for a dotted preview). Stops at ground.
+        """
+        pts: List[Tuple[int, int]] = []
+        posx, posy = float(start[0]), float(start[1])
+        vx, vy = direction.normalize().x * speed, direction.normalize().y * speed
+        for _ in range(steps):
+            vy += gravity * dt
+            posx += vx * dt
+            posy += vy * dt
+            if posy >= GROUND_Y - 2:
+                break
+            pts.append((int(posx), int(posy)))
+        return pts
 
     # ------------- Spawning & Wave handling ---------------------------------
 
@@ -602,7 +649,7 @@ class Game:
         px, py = self.player.pickup_center
         for pu in self.powerups:
             if pu.alive and pu.collides_with_point(px, py):
-                label = pu.apply(self)
+                label = pu.apply(self)  # powerup acts on game / player
                 pu.ttl = 0.0  # consumed
                 # pickup FX
                 self.fx_rings.append(RingBurst(x=pu.x, y=pu.y, radius=14, radius_to=40, color=WHITE))
@@ -663,6 +710,13 @@ class Game:
         for r in self.fx_rings:
             r.draw(target)
 
+        # Optional trajectory preview (player bow)
+        if self.show_trajectory and not self.game_over:
+            hand = (self.player.x + 10, self.player.y + 15)
+            pts = self.compute_trajectory(hand, self.player.aim_dir, ARROW_SPEED, ARROW_GRAVITY)
+            for x, y in pts[::2]:  # draw every other point for dotted look
+                pygame.draw.circle(target, (120, 200, 255), (x, y), 2)
+
     def render(self) -> None:
         # Draw world into offscreen scene
         self.render_scene(self.scene)
@@ -677,7 +731,8 @@ class Game:
             self.screen, self.font, score=self.score, wave=self.wave,
             player_hp=self.player.hp, player_stamina=self.player.stamina,
             castle_hp=int(self.castle_hp), paused=self.paused, game_over=self.game_over,
-            triple_timer=self.player.triple_shot_timer, high_score=self.high_score
+            triple_timer=self.player.triple_shot_timer, high_score=self.high_score,
+            slowmo=(self.time_scale < 0.9), show_traj=self.show_trajectory
         )
 
         # Non-shaking FX (floating text) & reticle on top
@@ -705,9 +760,13 @@ class Game:
             if ev.key == pygame.K_p:
                 self.paused = not self.paused
             if ev.key == pygame.K_r and self.game_over:
-                self.__init__()  # reset
+                self.__init__()  # reset (kept existing behavior)
             if ev.key == pygame.K_F11:
                 self.toggle_fullscreen()
+            if ev.key == pygame.K_t:
+                self.toggle_slow_motion()
+            if ev.key == pygame.K_g:
+                self.show_trajectory = not self.show_trajectory
             if ev.key == pygame.K_SPACE and not (self.paused or self.game_over):
                 self.player.try_shoot(self.projectiles)
                 self.shake.kick(1.5, 0.08)
@@ -723,23 +782,7 @@ class Game:
                 self.ballista.fire(self.projectiles)
                 self.shake.kick(2.0, 0.10)
 
-    # ------------- Main Loop -------------------------------------------------
-
-    def run(self) -> None:
-        while True:
-            dt = self.clock.tick(FPS) / 1000.0
-            # Clamp dt to prevent physics explosions during pauses/window drags
-            dt = min(dt, 1.0 / 30.0)
-
-            for ev in pygame.event.get():
-                self.handle_event(ev)
-
-            if not self.paused and not self.game_over:
-                self.update(dt)
-
-            self.render()
-class Game:
-    # ... (rest of the class)
+    # ------------- Title + Main Loop ----------------------------------------
 
     def title_screen(self) -> None:
         title_font = pygame.font.SysFont("consolas", 64)
@@ -755,8 +798,10 @@ class Game:
                     return
 
             self.screen.fill(SKY_BLUE)
-            self.screen.blit(title_text, (SCREEN_WIDTH // 2 - title_text.get_width() // 2, SCREEN_HEIGHT // 2 - title_text.get_height() // 2))
-            self.screen.blit(start_text, (SCREEN_WIDTH // 2 - start_text.get_width() // 2, SCREEN_HEIGHT // 2 + title_text.get_height() // 2 + 20))
+            self.screen.blit(title_text, (SCREEN_WIDTH // 2 - title_text.get_width() // 2,
+                                          SCREEN_HEIGHT // 2 - title_text.get_height() // 2))
+            self.screen.blit(start_text, (SCREEN_WIDTH // 2 - start_text.get_width() // 2,
+                                          SCREEN_HEIGHT // 2 + title_text.get_height() // 2 + 20))
             pygame.display.flip()
             self.clock.tick(FPS)
 
@@ -764,7 +809,9 @@ class Game:
         self.title_screen()
         while True:
             dt = self.clock.tick(FPS) / 1000.0
+            # Clamp dt to prevent physics explosions during pauses/window drags
             dt = min(dt, 1.0 / 30.0)
+            dt *= self.time_scale
 
             for ev in pygame.event.get():
                 self.handle_event(ev)
@@ -774,30 +821,6 @@ class Game:
 
             self.render()
 
-@dataclass
-class PowerUp:
-    x: float
-    y: float
-    ttl: float = 5.0  # time to live
-    alive: bool = True
-
-    def update(self, dt: float, player_center: Tuple[float, float], magnet_radius: float) -> None:
-        self.ttl -= dt
-        if self.ttl <= 0:
-            self.alive = False
-
-    def draw(self, screen: pygame.Surface) -> None:
-        pygame.draw.circle(screen, GOLD, (int(self.x), int(self.y)), 10)
-
-    def collides_with_point(self, x: float, y: float) -> bool:
-        return ((self.x - x) ** 2 + (self.y - y) ** 2) ** 0.5 < 10
-
-    def apply(self, player: 'Player') -> str:
-        player.triple_shot_timer = 5.0
-        return "Triple Shot"
-
-def spawn_powerup_at(x: float, y: float) -> PowerUp:
-    return PowerUp(x=x, y=y)
 # ---------------------------------------------------------------------------
 # Entrypoint
 # ---------------------------------------------------------------------------
